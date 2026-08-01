@@ -1,0 +1,6 @@
+{
+  "name": "Video Studio AI",
+  "description": "Plataforma profesional para generar videos largos (5-15+ min) para YouTube y Facebook con Gemini, Imagen 4, Veo y Lyria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
