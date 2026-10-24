@@ -12,7 +12,7 @@ export const VideoGallery: React.FC<VideoGalleryProps> = ({
   projects,
   onSelectProject,
   onDeleteProject,
-}) => {
+}) => { 
   if (!projects || projects.length === 0) {
     return (
       <div className="glass-card w-full max-w-[1000px] mx-auto rounded-xl p-8 text-center my-8">

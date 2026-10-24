@@ -1,5 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+} from 'react';
+
 import { VideoProject, Scene } from '../types';
+
 import {
   Play,
   Pause,
@@ -10,669 +17,2658 @@ import {
   Download,
   FileText,
   Subtitles,
-  Maximize2,
   Sparkles,
   Layers,
-  RefreshCw,
-  Share2,
-  Sliders,
-  CheckCircle2
+  Film,
+  ExternalLink,
 } from 'lucide-react';
 
+/*
+============================================================
+TIPO EXTENDIDO
+============================================================
+
+VideoProject original no necesariamente contiene
+los campos del render.
+
+Aquí agregamos los campos necesarios para el MP4.
+============================================================
+*/
+
+type RenderedVideoProject =
+  VideoProject & {
+    videoUrl?: string;
+    downloadUrl?: string;
+    renderJobId?: string;
+  };
+
 interface VideoStudioPlayerProps {
-  project: VideoProject;
-  onUpdateProject?: (updated: VideoProject) => void;
-  onReGenerateSceneImage?: (sceneIndex: number) => Promise<void>;
+  project: RenderedVideoProject;
+
+  onUpdateProject?: (
+    updated: VideoProject
+  ) => void;
+
+  onReGenerateSceneImage?: (
+    sceneIndex: number
+  ) => Promise<void>;
 }
 
-export const VideoStudioPlayer: React.FC<VideoStudioPlayerProps> = ({
+export const VideoStudioPlayer: React.FC<
+  VideoStudioPlayerProps
+> = ({
   project,
   onUpdateProject,
-  onReGenerateSceneImage,
 }) => {
-  const scenes = project.script.escenas || [];
-  const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [kenBurnsEnabled, setKenBurnsEnabled] = useState(true);
-  const [showSubtitles, setShowSubtitles] = useState(project.subtitlesEnabled);
-  const [isExportingVideo, setIsExportingVideo] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
-  const [exportStatusMessage, setExportStatusMessage] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'player' | 'script'>('player');
+  /*
+   * ============================================================
+   * ESCENAS
+   * ============================================================
+   */
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number>(Date.now());
-  const sceneStartTimeRef = useRef<number>(Date.now());
-  const currentImageRef = useRef<HTMLImageElement | null>(null);
-  const loadedImagesMap = useRef<Map<number, HTMLImageElement>>(new Map());
+  const scenes: Scene[] =
+    Array.isArray(
+      project?.script?.escenas
+    )
+      ? project.script.escenas
+      : [];
 
-  const currentScene: Scene | undefined = scenes[currentSceneIndex];
-  const SCENE_DURATION_MS = 9000; // 9 seconds per scene preview loop
+  /*
+   * ============================================================
+   * VIDEO FINAL
+   * ============================================================
+   */
 
-  // Preload all scene images into memory for seamless canvas transitions
+  const finalVideoUrl =
+    project?.videoUrl ||
+    project?.downloadUrl ||
+    '';
+
+  const hasRenderedVideo =
+    Boolean(
+      finalVideoUrl &&
+      project?.status ===
+        'completed'
+    );
+
+  /*
+   * ============================================================
+   * ESTADOS
+   * ============================================================
+   */
+
+  const [
+    currentSceneIndex,
+    setCurrentSceneIndex,
+  ] = useState(0);
+
+  const [
+    isPlaying,
+    setIsPlaying,
+  ] = useState(false);
+
+  const [
+    isMuted,
+    setIsMuted,
+  ] = useState(false);
+
+  const [
+    kenBurnsEnabled,
+    setKenBurnsEnabled,
+  ] = useState(true);
+
+  const [
+    showSubtitles,
+    setShowSubtitles,
+  ] = useState(
+    Boolean(
+      project.subtitlesEnabled
+    )
+  );
+
+  const [
+    isExportingVideo,
+    setIsExportingVideo,
+  ] = useState(false);
+
+  const [
+    exportProgress,
+    setExportProgress,
+  ] = useState(0);
+
+  const [
+    exportStatusMessage,
+    setExportStatusMessage,
+  ] = useState('');
+
+  const [
+    activeTab,
+    setActiveTab,
+  ] = useState<
+    'player' | 'script'
+  >('player');
+
+  /*
+   * ============================================================
+   * REFS
+   * ============================================================
+   */
+
+  const canvasRef =
+    useRef<HTMLCanvasElement | null>(
+      null
+    );
+
+  const videoRef =
+    useRef<HTMLVideoElement | null>(
+      null
+    );
+
+  const animationFrameRef =
+    useRef<number | null>(
+      null
+    );
+
+  const sceneStartTimeRef =
+    useRef<number>(
+      Date.now()
+    );
+
+  const currentImageRef =
+    useRef<HTMLImageElement | null>(
+      null
+    );
+
+  const loadedImagesMap =
+    useRef<
+      Map<
+        number,
+        HTMLImageElement
+      >
+    >(new Map());
+
+  const loadingImagesMap =
+    useRef<
+      Map<
+        number,
+        HTMLImageElement
+      >
+    >(new Map());
+
+  const mountedRef =
+    useRef(true);
+
+  const exportPollRef =
+    useRef<number | null>(
+      null
+    );
+
+  /*
+   * ============================================================
+   * ESCENA ACTUAL
+   * ============================================================
+   */
+
+  const currentScene:
+    | Scene
+    | undefined =
+    scenes[
+      currentSceneIndex
+    ];
+
+  /*
+   * ============================================================
+   * DURACIÓN DE ESCENA
+   * ============================================================
+   */
+
+  const getSceneDurationSeconds =
+    useCallback(
+      (
+        scene?: Scene
+      ): number => {
+        const duration =
+          Number(
+            scene?.durationSeconds
+          );
+
+        if (
+          Number.isFinite(
+            duration
+          ) &&
+          duration > 0
+        ) {
+          return duration;
+        }
+
+        return 9;
+      },
+      []
+    );
+
+  const currentSceneDurationMs =
+    getSceneDurationSeconds(
+      currentScene
+    ) * 1000;
+
+  /*
+   * ============================================================
+   * MONTADO / DESMONTADO
+   * ============================================================
+   */
+
   useEffect(() => {
-    scenes.forEach((sc, idx) => {
-      if (sc.imageUrl) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = sc.imageUrl;
-        img.onload = () => {
-          loadedImagesMap.current.set(idx, img);
-          if (idx === currentSceneIndex) {
-            currentImageRef.current = img;
-          }
-        };
+    mountedRef.current =
+      true;
+
+    return () => {
+      mountedRef.current =
+        false;
+
+      if (
+        animationFrameRef.current !==
+        null
+      ) {
+        cancelAnimationFrame(
+          animationFrameRef.current
+        );
+
+        animationFrameRef.current =
+          null;
       }
-    });
-  }, [scenes]);
 
-  // Update image ref when currentSceneIndex changes
-  useEffect(() => {
-    const cachedImg = loadedImagesMap.current.get(currentSceneIndex);
-    if (cachedImg) {
-      currentImageRef.current = cachedImg;
-    } else if (currentScene?.imageUrl) {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = currentScene.imageUrl;
-      img.onload = () => {
-        loadedImagesMap.current.set(currentSceneIndex, img);
-        currentImageRef.current = img;
-      };
-    }
-    sceneStartTimeRef.current = Date.now();
-  }, [currentSceneIndex, currentScene]);
+      if (
+        exportPollRef.current !==
+        null
+      ) {
+        window.clearInterval(
+          exportPollRef.current
+        );
 
-  // Play narration via Web Speech Synthesis if audioUrl is absent or fallback
-  useEffect(() => {
-    if (isPlaying && currentScene?.texto_narracion && !isMuted) {
-      if ('speechSynthesis' in window) {
+        exportPollRef.current =
+          null;
+      }
+
+      if (
+        'speechSynthesis' in
+        window
+      ) {
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(currentScene.texto_narracion);
-        utterance.lang = 'es-MX';
-        utterance.rate = 1.0;
-        utterance.pitch = 0.95;
-        window.speechSynthesis.speak(utterance);
       }
-    } else if (!isPlaying && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-  }, [isPlaying, currentSceneIndex, isMuted, currentScene]);
+    };
+  }, []);
 
-  // Main Canvas Rendering Loop with Ken Burns Effect and Subtitles Burn-In
+  /*
+   * ============================================================
+   * CARGADOR DE IMÁGENES
+   * ============================================================
+   */
+
+  const loadSceneImage =
+    useCallback(
+      (
+        sceneIndex: number,
+        scene: Scene
+      ): Promise<
+        HTMLImageElement | null
+      > => {
+        return new Promise(
+          (resolve) => {
+            const cached =
+              loadedImagesMap.current.get(
+                sceneIndex
+              );
+
+            if (
+              cached &&
+              cached.complete &&
+              cached.naturalWidth > 0
+            ) {
+              resolve(cached);
+              return;
+            }
+
+            if (
+              !scene?.imageUrl
+            ) {
+              resolve(null);
+              return;
+            }
+
+            const loading =
+              loadingImagesMap.current.get(
+                sceneIndex
+              );
+
+            if (loading) {
+              const checkLoaded =
+                () => {
+                  const result =
+                    loadedImagesMap.current.get(
+                      sceneIndex
+                    );
+
+                  if (
+                    result &&
+                    result.complete &&
+                    result.naturalWidth > 0
+                  ) {
+                    resolve(
+                      result
+                    );
+
+                    return;
+                  }
+
+                  window.setTimeout(
+                    checkLoaded,
+                    50
+                  );
+                };
+
+              checkLoaded();
+
+              return;
+            }
+
+            const img =
+              new Image();
+
+            if (
+              !scene.imageUrl.startsWith(
+                'data:image/'
+              )
+            ) {
+              img.crossOrigin =
+                'anonymous';
+            }
+
+            loadingImagesMap.current.set(
+              sceneIndex,
+              img
+            );
+
+            img.onload =
+              () => {
+                loadingImagesMap.current.delete(
+                  sceneIndex
+                );
+
+                loadedImagesMap.current.set(
+                  sceneIndex,
+                  img
+                );
+
+                resolve(img);
+              };
+
+            img.onerror =
+              () => {
+                loadingImagesMap.current.delete(
+                  sceneIndex
+                );
+
+                console.warn(
+                  `[VideoStudioPlayer] No se pudo cargar la imagen de la escena ${
+                    sceneIndex + 1
+                  }`
+                );
+
+                resolve(null);
+              };
+
+            img.src =
+              scene.imageUrl;
+          }
+        );
+      },
+      []
+    );
+
+  /*
+   * ============================================================
+   * PRECARGAR IMÁGENES
+   * ============================================================
+   */
+
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    let cancelled =
+      false;
 
-    let isSubscribed = true;
+    const preloadImages =
+      async () => {
+        for (
+          let index = 0;
+          index < scenes.length;
+          index++
+        ) {
+          if (
+            cancelled
+          ) {
+            return;
+          }
 
-    const renderFrame = () => {
-      if (!isSubscribed) return;
+          const scene =
+            scenes[index];
 
-      const width = canvas.width;
-      const height = canvas.height;
+          if (
+            !scene?.imageUrl
+          ) {
+            continue;
+          }
 
-      // 1. Clear background
-      ctx.fillStyle = '#0a0a0f';
-      ctx.fillRect(0, 0, width, height);
+          await loadSceneImage(
+            index,
+            scene
+          );
+        }
+      };
 
-      // 2. Draw image with Ken Burns Pan/Zoom
-      const img = currentImageRef.current;
-      if (img && img.complete && img.naturalWidth > 0) {
-        const elapsed = Date.now() - sceneStartTimeRef.current;
-        const progress = Math.min(1, elapsed / SCENE_DURATION_MS);
+    preloadImages();
 
-        let scale = 1.0;
-        let offsetX = 0;
-        let offsetY = 0;
+    return () => {
+      cancelled =
+        true;
+    };
+  }, [
+    scenes,
+    loadSceneImage,
+  ]);
 
-        if (kenBurnsEnabled) {
-          // Subtle slow zoom from 1.0 to 1.12 with slight diagonal pan
-          scale = 1.0 + progress * 0.12;
-          const panDirection = currentSceneIndex % 2 === 0 ? 1 : -1;
-          offsetX = (progress * 30 - 15) * panDirection;
-          offsetY = (progress * 15 - 7.5) * panDirection;
+  /*
+   * ============================================================
+   * CARGAR ESCENA ACTUAL
+   * ============================================================
+   */
+
+  useEffect(() => {
+    let cancelled =
+      false;
+
+    sceneStartTimeRef.current =
+      Date.now();
+
+    currentImageRef.current =
+      null;
+
+    if (!currentScene) {
+      return;
+    }
+
+    const cached =
+      loadedImagesMap.current.get(
+        currentSceneIndex
+      );
+
+    if (
+      cached &&
+      cached.complete &&
+      cached.naturalWidth > 0
+    ) {
+      currentImageRef.current =
+        cached;
+
+      return;
+    }
+
+    loadSceneImage(
+      currentSceneIndex,
+      currentScene
+    ).then(
+      (img) => {
+        if (
+          cancelled ||
+          !mountedRef.current
+        ) {
+          return;
+        }
+
+        currentImageRef.current =
+          img;
+
+        sceneStartTimeRef.current =
+          Date.now();
+      }
+    );
+
+    return () => {
+      cancelled =
+        true;
+    };
+  }, [
+    currentSceneIndex,
+    currentScene,
+    loadSceneImage,
+  ]);
+
+  /*
+   * ============================================================
+   * SPEECH SYNTHESIS PARA PREVIEW
+   * ============================================================
+   */
+
+  useEffect(() => {
+    /*
+    Si ya existe video real,
+    no usamos SpeechSynthesis.
+    */
+
+    if (
+      hasRenderedVideo
+    ) {
+      return;
+    }
+
+    if (
+      !isPlaying ||
+      !currentScene?.texto_narracion ||
+      isMuted ||
+      !(
+        'speechSynthesis' in
+        window
+      )
+    ) {
+      if (
+        'speechSynthesis' in
+        window
+      ) {
+        window.speechSynthesis.cancel();
+      }
+
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const utterance =
+      new SpeechSynthesisUtterance(
+        currentScene.texto_narracion
+      );
+
+    utterance.lang =
+      'es-MX';
+
+    utterance.rate =
+      1.0;
+
+    utterance.pitch =
+      0.95;
+
+    window.speechSynthesis.speak(
+      utterance
+    );
+
+    return () => {
+      if (
+        'speechSynthesis' in
+        window
+      ) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [
+    isPlaying,
+    currentSceneIndex,
+    currentScene,
+    isMuted,
+    hasRenderedVideo,
+  ]);
+
+  /*
+   * ============================================================
+   * FALLBACK CANVAS
+   * ============================================================
+   */
+
+  const drawFallback =
+    useCallback(
+      (
+        ctx: CanvasRenderingContext2D,
+        width: number,
+        height: number,
+        sceneNumber: number
+      ) => {
+        const gradient =
+          ctx.createLinearGradient(
+            0,
+            0,
+            width,
+            height
+          );
+
+        gradient.addColorStop(
+          0,
+          '#1a102f'
+        );
+
+        gradient.addColorStop(
+          1,
+          '#0b1329'
+        );
+
+        ctx.fillStyle =
+          gradient;
+
+        ctx.fillRect(
+          0,
+          0,
+          width,
+          height
+        );
+
+        ctx.fillStyle =
+          '#8b5cf6';
+
+        ctx.font =
+          'bold 26px sans-serif';
+
+        ctx.textAlign =
+          'center';
+
+        ctx.textBaseline =
+          'middle';
+
+        ctx.fillText(
+          `Preparando escena ${sceneNumber}`,
+          width / 2,
+          height / 2
+        );
+      },
+      []
+    );
+
+  /*
+   * ============================================================
+   * DIBUJAR IMAGEN
+   * ============================================================
+   */
+
+  const drawImageCover =
+    useCallback(
+      (
+        ctx: CanvasRenderingContext2D,
+        img: HTMLImageElement,
+        width: number,
+        height: number,
+        scale: number,
+        offsetX: number,
+        offsetY: number
+      ) => {
+        if (
+          !img ||
+          !img.complete ||
+          img.naturalWidth <= 0 ||
+          img.naturalHeight <= 0
+        ) {
+          return false;
+        }
+
+        const imgRatio =
+          img.naturalWidth /
+          img.naturalHeight;
+
+        const canvasRatio =
+          width / height;
+
+        let drawWidth =
+          width;
+
+        let drawHeight =
+          height;
+
+        if (
+          imgRatio >
+          canvasRatio
+        ) {
+          drawWidth =
+            height *
+            imgRatio;
+        } else {
+          drawHeight =
+            width /
+            imgRatio;
         }
 
         ctx.save();
-        ctx.translate(width / 2 + offsetX, height / 2 + offsetY);
-        ctx.scale(scale, scale);
 
-        // Aspect ratio cover calculation
-        const imgRatio = img.naturalWidth / img.naturalHeight;
-        const canvasRatio = width / height;
-        let drawWidth = width;
-        let drawHeight = height;
+        ctx.translate(
+          width / 2 +
+            offsetX,
+          height / 2 +
+            offsetY
+        );
 
-        if (imgRatio > canvasRatio) {
-          drawWidth = height * imgRatio;
-        } else {
-          drawHeight = width / imgRatio;
-        }
+        ctx.scale(
+          scale,
+          scale
+        );
 
-        ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-        ctx.restore();
-      } else {
-        // Gradient fallback if image loading
-        const grad = ctx.createLinearGradient(0, 0, width, height);
-        grad.addColorStop(0, '#1a102f');
-        grad.addColorStop(1, '#0b1329');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.fillStyle = '#8b5cf6';
-        ctx.font = 'bold 24px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(`Cargando Imagen de Escena ${currentSceneIndex + 1}...`, width / 2, height / 2);
-      }
-
-      // 3. Subtle Vignette Overlay
-      const vignette = ctx.createRadialGradient(width / 2, height / 2, height * 0.3, width / 2, height / 2, width * 0.7);
-      vignette.addColorStop(0, 'rgba(0,0,0,0)');
-      vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
-      ctx.fillStyle = vignette;
-      ctx.fillRect(0, 0, width, height);
-
-      // 4. Burned-In Subtitles Overlay
-      if (showSubtitles && currentScene?.texto_subtitulo) {
-        const text = currentScene.texto_subtitulo;
-        ctx.save();
-
-        const fontSize = Math.max(22, Math.floor(height * 0.042));
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        // Measure text for background box
-        const textMetrics = ctx.measureText(text);
-        const paddingX = 24;
-        const paddingY = 12;
-        const boxWidth = textMetrics.width + paddingX * 2;
-        const boxHeight = fontSize + paddingY * 2;
-        const boxX = width / 2 - boxWidth / 2;
-        const boxY = height - boxHeight - 40;
-
-        // Dark pill background with border
-        ctx.fillStyle = 'rgba(10, 10, 16, 0.88)';
-        ctx.strokeStyle = 'rgba(139, 92, 246, 0.6)';
-        ctx.lineWidth = 2;
-
-        ctx.beginPath();
-        if (ctx.roundRect) {
-          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 10);
-        } else {
-          ctx.rect(boxX, boxY, boxWidth, boxHeight);
-        }
-        ctx.fill();
-        ctx.stroke();
-
-        // High contrast yellow/white text
-        ctx.fillStyle = '#facc15'; // Neon yellow highlight
-        ctx.shadowColor = 'rgba(0,0,0,0.9)';
-        ctx.shadowBlur = 8;
-        ctx.fillText(text, width / 2, boxY + boxHeight / 2);
+        ctx.drawImage(
+          img,
+          -drawWidth / 2,
+          -drawHeight / 2,
+          drawWidth,
+          drawHeight
+        );
 
         ctx.restore();
-      }
 
-      // Auto-advance scenes if playing
-      if (isPlaying) {
-        const elapsed = Date.now() - sceneStartTimeRef.current;
-        if (elapsed >= SCENE_DURATION_MS) {
-          if (currentSceneIndex < scenes.length - 1) {
-            setCurrentSceneIndex((prev) => prev + 1);
+        return true;
+      },
+      []
+    );
+
+  /*
+   * ============================================================
+   * RENDER CANVAS
+   *
+   * SOLAMENTE PARA PREVISUALIZACIÓN.
+   *
+   * Si existe MP4 real, el Canvas no se utiliza.
+   * ============================================================
+   */
+
+  useEffect(() => {
+    if (
+      hasRenderedVideo
+    ) {
+      return;
+    }
+
+    const canvas =
+      canvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const ctx =
+      canvas.getContext(
+        '2d'
+      );
+
+    if (!ctx) {
+      return;
+    }
+
+    let active =
+      true;
+
+    canvas.width =
+      1280;
+
+    canvas.height =
+      720;
+
+    const renderFrame =
+      () => {
+        if (!active) {
+          return;
+        }
+
+        const width =
+          canvas.width;
+
+        const height =
+          canvas.height;
+
+        ctx.clearRect(
+          0,
+          0,
+          width,
+          height
+        );
+
+        ctx.fillStyle =
+          '#0a0a0f';
+
+        ctx.fillRect(
+          0,
+          0,
+          width,
+          height
+        );
+
+        const img =
+          currentImageRef.current;
+
+        if (
+          img &&
+          img.complete &&
+          img.naturalWidth > 0 &&
+          img.naturalHeight > 0
+        ) {
+          const elapsed =
+            Math.max(
+              0,
+              Date.now() -
+                sceneStartTimeRef.current
+            );
+
+          const progress =
+            Math.min(
+              1,
+              elapsed /
+                Math.max(
+                  1,
+                  currentSceneDurationMs
+                )
+            );
+
+          let scale =
+            1;
+
+          let offsetX =
+            0;
+
+          let offsetY =
+            0;
+
+          if (
+            kenBurnsEnabled
+          ) {
+            scale =
+              1 +
+              progress *
+                0.12;
+
+            const direction =
+              currentSceneIndex %
+                2 ===
+              0
+                ? 1
+                : -1;
+
+            offsetX =
+              (progress *
+                30 -
+                15) *
+              direction;
+
+            offsetY =
+              (progress *
+                15 -
+                7.5) *
+              direction;
+          }
+
+          drawImageCover(
+            ctx,
+            img,
+            width,
+            height,
+            scale,
+            offsetX,
+            offsetY
+          );
+        } else {
+          drawFallback(
+            ctx,
+            width,
+            height,
+            currentSceneIndex +
+              1
+          );
+        }
+
+        /*
+         * VIÑETA
+         */
+
+        const vignette =
+          ctx.createRadialGradient(
+            width / 2,
+            height / 2,
+            height * 0.3,
+            width / 2,
+            height / 2,
+            width * 0.7
+          );
+
+        vignette.addColorStop(
+          0,
+          'rgba(0,0,0,0)'
+        );
+
+        vignette.addColorStop(
+          1,
+          'rgba(0,0,0,0.55)'
+        );
+
+        ctx.fillStyle =
+          vignette;
+
+        ctx.fillRect(
+          0,
+          0,
+          width,
+          height
+        );
+
+        /*
+         * SUBTÍTULOS
+         */
+
+        if (
+          showSubtitles &&
+          currentScene?.texto_subtitulo
+        ) {
+          const text =
+            currentScene.texto_subtitulo;
+
+          ctx.save();
+
+          const fontSize =
+            Math.max(
+              22,
+              Math.floor(
+                height *
+                  0.042
+              )
+            );
+
+          ctx.font =
+            `bold ${fontSize}px sans-serif`;
+
+          ctx.textAlign =
+            'center';
+
+          ctx.textBaseline =
+            'middle';
+
+          const maxTextWidth =
+            width * 0.82;
+
+          let displayText =
+            text;
+
+          if (
+            ctx.measureText(
+              displayText
+            ).width >
+            maxTextWidth
+          ) {
+            while (
+              displayText.length >
+                0 &&
+              ctx.measureText(
+                `${displayText}…`
+              ).width >
+                maxTextWidth
+            ) {
+              displayText =
+                displayText.slice(
+                  0,
+                  -1
+                );
+            }
+
+            displayText +=
+              '…';
+          }
+
+          const textMetrics =
+            ctx.measureText(
+              displayText
+            );
+
+          const paddingX =
+            24;
+
+          const paddingY =
+            12;
+
+          const boxWidth =
+            textMetrics.width +
+            paddingX * 2;
+
+          const boxHeight =
+            fontSize +
+            paddingY * 2;
+
+          const boxX =
+            width / 2 -
+            boxWidth / 2;
+
+          const boxY =
+            height -
+            boxHeight -
+            40;
+
+          ctx.fillStyle =
+            'rgba(10,10,16,0.88)';
+
+          ctx.strokeStyle =
+            'rgba(139,92,246,0.6)';
+
+          ctx.lineWidth =
+            2;
+
+          ctx.beginPath();
+
+          if (
+            typeof ctx.roundRect ===
+            'function'
+          ) {
+            ctx.roundRect(
+              boxX,
+              boxY,
+              boxWidth,
+              boxHeight,
+              10
+            );
           } else {
-            setIsPlaying(false);
-            setCurrentSceneIndex(0);
+            ctx.rect(
+              boxX,
+              boxY,
+              boxWidth,
+              boxHeight
+            );
+          }
+
+          ctx.fill();
+
+          ctx.stroke();
+
+          ctx.fillStyle =
+            '#facc15';
+
+          ctx.shadowColor =
+            'rgba(0,0,0,0.9)';
+
+          ctx.shadowBlur =
+            8;
+
+          ctx.fillText(
+            displayText,
+            width / 2,
+            boxY +
+              boxHeight / 2
+          );
+
+          ctx.restore();
+        }
+
+        /*
+         * CAMBIO AUTOMÁTICO DE ESCENA
+         */
+
+        if (
+          isPlaying &&
+          scenes.length > 0
+        ) {
+          const elapsed =
+            Date.now() -
+            sceneStartTimeRef.current;
+
+          if (
+            elapsed >=
+            currentSceneDurationMs
+          ) {
+            if (
+              currentSceneIndex <
+              scenes.length - 1
+            ) {
+              setCurrentSceneIndex(
+                (prev) =>
+                  prev + 1
+              );
+
+              sceneStartTimeRef.current =
+                Date.now();
+            } else {
+              setIsPlaying(
+                false
+              );
+
+              setCurrentSceneIndex(
+                0
+              );
+
+              sceneStartTimeRef.current =
+                Date.now();
+            }
           }
         }
-      }
 
-      animationFrameRef.current = requestAnimationFrame(renderFrame);
-    };
+        animationFrameRef.current =
+          requestAnimationFrame(
+            renderFrame
+          );
+      };
 
     renderFrame();
 
     return () => {
-      isSubscribed = false;
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+      active =
+        false;
+
+      if (
+        animationFrameRef.current !==
+        null
+      ) {
+        cancelAnimationFrame(
+          animationFrameRef.current
+        );
+
+        animationFrameRef.current =
+          null;
       }
     };
-  }, [isPlaying, currentSceneIndex, kenBurnsEnabled, showSubtitles, currentScene, scenes]);
+  }, [
+    hasRenderedVideo,
+    isPlaying,
+    currentSceneIndex,
+    currentSceneDurationMs,
+    kenBurnsEnabled,
+    showSubtitles,
+    currentScene,
+    scenes.length,
+    drawFallback,
+    drawImageCover,
+  ]);
 
-  const handleNextScene = () => {
-    if (currentSceneIndex < scenes.length - 1) {
-      setCurrentSceneIndex((prev) => prev + 1);
-    }
-  };
+  /*
+   * ============================================================
+   * NAVEGACIÓN
+   * ============================================================
+   */
 
-  const handlePrevScene = () => {
-    if (currentSceneIndex > 0) {
-      setCurrentSceneIndex((prev) => prev - 1);
-    }
-  };
+  const handleNextScene =
+    () => {
+      if (
+        currentSceneIndex <
+        scenes.length - 1
+      ) {
+        setCurrentSceneIndex(
+          (prev) =>
+            prev + 1
+        );
 
-  const handleTogglePlay = () => {
-    setIsPlaying(!isPlaying);
-  };
+        sceneStartTimeRef.current =
+          Date.now();
+      }
+    };
 
-  // Download SRT Subtitles file
-  const handleDownloadSRT = () => {
-    let srtContent = '';
-    let currentTimeMs = 0;
+  const handlePrevScene =
+    () => {
+      if (
+        currentSceneIndex >
+        0
+      ) {
+        setCurrentSceneIndex(
+          (prev) =>
+            prev - 1
+        );
 
-    scenes.forEach((sc, idx) => {
-      const startTime = formatSrtTime(currentTimeMs);
-      currentTimeMs += 9000;
-      const endTime = formatSrtTime(currentTimeMs);
+        sceneStartTimeRef.current =
+          Date.now();
+      }
+    };
 
-      srtContent += `${idx + 1}\n`;
-      srtContent += `${startTime} --> ${endTime}\n`;
-      srtContent += `${sc.texto_subtitulo || sc.texto_narracion}\n\n`;
-    });
+  const handleTogglePlay =
+    () => {
+      /*
+      Si existe MP4 real,
+      usamos el elemento VIDEO.
+      */
 
-    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${project.topic.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30)}_subtitulos.srt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+      if (
+        hasRenderedVideo &&
+        videoRef.current
+      ) {
+        const video =
+          videoRef.current;
 
-  // Export JSON Script
-  const handleDownloadScriptJson = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(project.script, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `${project.topic.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30)}_guion.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-  };
+        if (
+          video.paused
+        ) {
+          video
+            .play()
+            .catch(
+              (error) => {
+                console.warn(
+                  'No se pudo reproducir el video:',
+                  error
+                );
+              }
+            );
+        } else {
+          video.pause();
+        }
 
-  // Export Video File via Server-Side FFmpeg
-  const handleExportVideoFile = async () => {
-    setIsExportingVideo(true);
-    setExportProgress(0);
-    setExportStatusMessage('Iniciando solicitud de ensamblado FFmpeg en el servidor...');
-    setIsPlaying(false);
-
-    try {
-      const response = await fetch('/api/export-video-ffmpeg', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project,
-          subtitlesEnabled: showSubtitles,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok || !data.success || !data.jobId) {
-        throw new Error(data.error || 'Error al iniciar el trabajo de exportación en el servidor.');
+        return;
       }
 
-      const jobId = data.jobId;
+      /*
+      Preview Canvas.
+      */
 
-      // Poll status every 1.5 seconds
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`/api/export-video-status/${jobId}`);
-          if (!statusRes.ok) return;
+      sceneStartTimeRef.current =
+        Date.now();
 
-          const statusData = await statusRes.json();
-          setExportProgress(statusData.progress || 0);
-          if (statusData.message) {
-            setExportStatusMessage(statusData.message);
-          }
+      setIsPlaying(
+        (prev) => !prev
+      );
+    };
 
-          if (statusData.status === 'completed' && statusData.downloadUrl) {
-            clearInterval(pollInterval);
-            setIsExportingVideo(false);
-            setExportProgress(100);
+  /*
+   * ============================================================
+   * EVENTOS DEL VIDEO REAL
+   * ============================================================
+   */
 
-            // Trigger direct file download
-            const downloadAnchor = document.createElement('a');
-            downloadAnchor.href = statusData.downloadUrl;
-            downloadAnchor.download = `${project.topic.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30)}_final_video.mp4`;
-            document.body.appendChild(downloadAnchor);
-            downloadAnchor.click();
-            downloadAnchor.remove();
-          } else if (statusData.status === 'failed') {
-            clearInterval(pollInterval);
-            setIsExportingVideo(false);
-            alert(`Error durante la exportación con FFmpeg: ${statusData.error || 'Fallo en la renderización.'}`);
-          }
-        } catch (pollErr) {
-          console.warn('Error polling export status:', pollErr);
+  const handleVideoPlay =
+    () => {
+      setIsPlaying(
+        true
+      );
+    };
+
+  const handleVideoPause =
+    () => {
+      setIsPlaying(
+        false
+      );
+    };
+
+  const handleVideoEnded =
+    () => {
+      setIsPlaying(
+        false
+      );
+    };
+
+  /*
+   * ============================================================
+   * DESCARGAR MP4 REAL
+   * ============================================================
+   */
+
+  const handleDownloadFinalVideo =
+    () => {
+      if (
+        !finalVideoUrl
+      ) {
+        alert(
+          'El video final todavía no está disponible.'
+        );
+
+        return;
+      }
+
+      const anchor =
+        document.createElement(
+          'a'
+        );
+
+      anchor.href =
+        finalVideoUrl;
+
+      anchor.download =
+        `${sanitizeFileName(
+          project.topic
+        )}_final_video.mp4`;
+
+      anchor.target =
+        '_blank';
+
+      anchor.rel =
+        'noopener noreferrer';
+
+      document.body.appendChild(
+        anchor
+      );
+
+      anchor.click();
+
+      anchor.remove();
+    };
+
+  /*
+   * ============================================================
+   * DESCARGAR SRT
+   * ============================================================
+   */
+
+  const handleDownloadSRT =
+    () => {
+      let srtContent =
+        '';
+
+      let currentTimeMs =
+        0;
+
+      scenes.forEach(
+        (
+          scene,
+          index
+        ) => {
+          const durationMs =
+            getSceneDurationSeconds(
+              scene
+            ) * 1000;
+
+          const startTime =
+            formatSrtTime(
+              currentTimeMs
+            );
+
+          const endTime =
+            formatSrtTime(
+              currentTimeMs +
+                durationMs
+            );
+
+          currentTimeMs +=
+            durationMs;
+
+          const text =
+            scene.texto_subtitulo ||
+            scene.texto_narracion ||
+            `Escena ${
+              index + 1
+            }`;
+
+          srtContent +=
+            `${index + 1}\n`;
+
+          srtContent +=
+            `${startTime} --> ${endTime}\n`;
+
+          srtContent +=
+            `${text}\n\n`;
         }
-      }, 1500);
-    } catch (err: any) {
-      console.error('Error exporting video:', err);
-      setIsExportingVideo(false);
-      alert(`Error al exportar el video: ${err.message}`);
+      );
+
+      const blob =
+        new Blob(
+          [srtContent],
+          {
+            type:
+              'text/plain;charset=utf-8',
+          }
+        );
+
+      const url =
+        URL.createObjectURL(
+          blob
+        );
+
+      const anchor =
+        document.createElement(
+          'a'
+        );
+
+      anchor.href =
+        url;
+
+      anchor.download =
+        `${sanitizeFileName(
+          project.topic
+        )}_subtitulos.srt`;
+
+      document.body.appendChild(
+        anchor
+      );
+
+      anchor.click();
+
+      anchor.remove();
+
+      window.setTimeout(
+        () =>
+          URL.revokeObjectURL(
+            url
+          ),
+        1000
+      );
+    };
+
+  /*
+   * ============================================================
+   * DESCARGAR JSON
+   * ============================================================
+   */
+
+  const handleDownloadScriptJson =
+    () => {
+      const json =
+        JSON.stringify(
+          project.script,
+          null,
+          2
+        );
+
+      const blob =
+        new Blob(
+          [json],
+          {
+            type:
+              'application/json;charset=utf-8',
+          }
+        );
+
+      const url =
+        URL.createObjectURL(
+          blob
+        );
+
+      const anchor =
+        document.createElement(
+          'a'
+        );
+
+      anchor.href =
+        url;
+
+      anchor.download =
+        `${sanitizeFileName(
+          project.topic
+        )}_guion.json`;
+
+      document.body.appendChild(
+        anchor
+      );
+
+      anchor.click();
+
+      anchor.remove();
+
+      window.setTimeout(
+        () =>
+          URL.revokeObjectURL(
+            url
+          ),
+        1000
+      );
+    };
+
+  /*
+   * ============================================================
+   * EXPORTAR VIDEO
+   *
+   * SOLO se utiliza cuando todavía NO tenemos
+   * un MP4 final.
+   * ============================================================
+   */
+
+  const handleExportVideoFile =
+    async () => {
+      if (
+        hasRenderedVideo
+      ) {
+        handleDownloadFinalVideo();
+        return;
+      }
+
+      if (
+        isExportingVideo
+      ) {
+        return;
+      }
+
+      if (
+        scenes.length === 0
+      ) {
+        alert(
+          'No existen escenas para exportar.'
+        );
+
+        return;
+      }
+
+      setIsExportingVideo(
+        true
+      );
+
+      setExportProgress(
+        0
+      );
+
+      setExportStatusMessage(
+        'Iniciando solicitud de ensamblado FFmpeg en el servidor...'
+      );
+
+      setIsPlaying(
+        false
+      );
+
+      try {
+        const response =
+          await fetch(
+            '/api/export-video-ffmpeg',
+            {
+              method: 'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+
+              body: JSON.stringify({
+                project,
+
+                subtitlesEnabled:
+                  showSubtitles,
+              }),
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.jobId
+        ) {
+          throw new Error(
+            data.error ||
+              'Error al iniciar el trabajo de exportación en el servidor.'
+          );
+        }
+
+        const jobId =
+          data.jobId;
+
+        if (
+          exportPollRef.current !==
+          null
+        ) {
+          window.clearInterval(
+            exportPollRef.current
+          );
+        }
+
+        exportPollRef.current =
+          window.setInterval(
+            async () => {
+              try {
+                const statusRes =
+                  await fetch(
+                    `/api/export-video-status/${encodeURIComponent(
+                      jobId
+                    )}`
+                  );
+
+                if (
+                  !statusRes.ok
+                ) {
+                  return;
+                }
+
+                const statusData =
+                  await statusRes.json();
+
+                if (
+                  !mountedRef.current
+                ) {
+                  return;
+                }
+
+                setExportProgress(
+                  Number(
+                    statusData.progress ||
+                      0
+                  )
+                );
+
+                if (
+                  statusData.message
+                ) {
+                  setExportStatusMessage(
+                    statusData.message
+                  );
+                }
+
+                /*
+                ==================================================
+                COMPLETADO
+                ==================================================
+                */
+
+                if (
+                  statusData.status ===
+                  'completed'
+                ) {
+                  if (
+                    exportPollRef.current !==
+                    null
+                  ) {
+                    window.clearInterval(
+                      exportPollRef.current
+                    );
+
+                    exportPollRef.current =
+                      null;
+                  }
+
+                  const generatedUrl =
+                    statusData.videoUrl ||
+                    statusData.downloadUrl ||
+                    `/api/download-video/${encodeURIComponent(
+                      jobId
+                    )}`;
+
+                  /*
+                  Actualizamos el proyecto
+                  inmediatamente.
+
+                  Así el MP4 aparece en el
+                  reproductor.
+                  */
+
+                  const updatedProject:
+                    RenderedVideoProject =
+                    {
+                      ...project,
+
+                      status:
+                        'completed',
+
+                      renderedProgress:
+                        100,
+
+                      videoUrl:
+                        generatedUrl,
+
+                      downloadUrl:
+                        statusData.downloadUrl ||
+                        generatedUrl,
+
+                      renderJobId:
+                        jobId,
+                    };
+
+                  setIsExportingVideo(
+                    false
+                  );
+
+                  setExportProgress(
+                    100
+                  );
+
+                  setExportStatusMessage(
+                    '¡Video ensamblado y listo para reproducir!'
+                  );
+
+                  onUpdateProject?.(
+                    updatedProject
+                  );
+
+                  return;
+                }
+
+                /*
+                ==================================================
+                ERROR
+                ==================================================
+                */
+
+                if (
+                  statusData.status ===
+                  'failed'
+                ) {
+                  if (
+                    exportPollRef.current !==
+                    null
+                  ) {
+                    window.clearInterval(
+                      exportPollRef.current
+                    );
+
+                    exportPollRef.current =
+                      null;
+                  }
+
+                  setIsExportingVideo(
+                    false
+                  );
+
+                  alert(
+                    `Error durante la exportación con FFmpeg: ${
+                      statusData.error ||
+                      'Fallo en la renderización.'
+                    }`
+                  );
+                }
+              } catch (
+                pollErr
+              ) {
+                console.warn(
+                  'Error polling export status:',
+                  pollErr
+                );
+              }
+            },
+            1500
+          );
+      } catch (
+        err: any
+      ) {
+        console.error(
+          'Error exporting video:',
+          err
+        );
+
+        if (
+          exportPollRef.current !==
+          null
+        ) {
+          window.clearInterval(
+            exportPollRef.current
+          );
+
+          exportPollRef.current =
+            null;
+        }
+
+        setIsExportingVideo(
+          false
+        );
+
+        alert(
+          `Error al exportar el video: ${
+            err?.message ||
+            'Error desconocido'
+          }`
+        );
+      }
+    };
+
+  /*
+   * ============================================================
+   * FORMATO SRT
+   * ============================================================
+   */
+
+  function formatSrtTime(
+    ms: number
+  ): string {
+    const totalSecs =
+      Math.floor(
+        ms / 1000
+      );
+
+    const hours =
+      Math.floor(
+        totalSecs / 3600
+      );
+
+    const mins =
+      Math.floor(
+        (totalSecs % 3600) /
+          60
+      );
+
+    const secs =
+      totalSecs % 60;
+
+    const millis =
+      Math.floor(
+        ms % 1000
+      );
+
+    return `${pad(
+      hours,
+      2
+    )}:${pad(
+      mins,
+      2
+    )}:${pad(
+      secs,
+      2
+    )},${pad(
+      millis,
+      3
+    )}`;
+  }
+
+  function pad(
+    num: number,
+    size: number
+  ): string {
+    let value =
+      String(num);
+
+    while (
+      value.length <
+      size
+    ) {
+      value =
+        '0' + value;
     }
-  };
 
-  function formatSrtTime(ms: number): string {
-    const totalSecs = Math.floor(ms / 1000);
-    const hours = Math.floor(totalSecs / 3600);
-    const mins = Math.floor((totalSecs % 3600) / 60);
-    const secs = totalSecs % 60;
-    const millis = ms % 1000;
-
-    return `${pad(hours, 2)}:${pad(mins, 2)}:${pad(secs, 2)},${pad(millis, 3)}`;
+    return value;
   }
 
-  function pad(num: number, size: number): string {
-    let s = num + '';
-    while (s.length < size) s = '0' + s;
-    return s;
+  function sanitizeFileName(
+    value: string
+  ): string {
+    return (
+      String(value || '')
+        .replace(
+          /[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]/g,
+          '_'
+        )
+        .substring(
+          0,
+          50
+        ) ||
+      'video_studio'
+    );
   }
+
+  /*
+   * ============================================================
+   * SIN ESCENAS
+   * ============================================================
+   */
+
+  if (
+    !scenes.length
+  ) {
+    return (
+      <div className="bg-[#050508] border border-white/5 rounded-lg p-8 text-center">
+
+        <FilmIconPlaceholder />
+
+        <h3 className="text-white font-bold mt-3">
+          No hay escenas disponibles
+        </h3>
+
+        <p className="text-sm text-slate-400 mt-2">
+          Genera un guion antes de
+          abrir el reproductor.
+        </p>
+
+      </div>
+    );
+  }
+
+  /*
+   * ============================================================
+   * INTERFAZ
+   * ============================================================
+   */
 
   return (
-    <div className="glass-card w-full max-w-[1000px] mx-auto rounded-xl p-6 space-y-6">
-      {/* Title & Nav Tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
+    <div className="space-y-4">
+
+      {/* HEADER */}
+
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+
         <div>
-          <div className="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded bg-[#8b5cf6]/10 text-[#8b5cf6] border border-[#8b5cf6]/30 mb-1">
-            <span>Tono: {project.tone}</span>
-            <span>•</span>
-            <span>Estilo: {project.visualStyle}</span>
+
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-400">
+
+            <span>
+              Tono: {project.tone}
+            </span>
+
+            <span>
+              •
+            </span>
+
+            <span>
+              Estilo:{' '}
+              {project.visualStyle}
+            </span>
+
           </div>
-          <h2 className="text-xl font-bold text-white leading-snug">
-            {project.script.titulo || project.topic}
+
+          <h2 className="text-lg md:text-xl font-bold text-white mt-1">
+            {project.script.titulo ||
+              project.topic}
           </h2>
+
+          <p className="text-[11px] text-slate-500 mt-1">
+
+            {scenes.length}{' '}
+            escenas · duración
+            configurada:{' '}
+            {project.durationMin ||
+              'personalizada'}{' '}
+            min
+
+          </p>
+
         </div>
 
         <div className="flex items-center gap-2 bg-[#050508] p-1 rounded-lg border border-white/5">
+
           <button
-            onClick={() => setActiveTab('player')}
+            onClick={() =>
+              setActiveTab(
+                'player'
+              )
+            }
             className={`px-3.5 py-1.5 text-xs font-bold rounded transition-all ${
-              activeTab === 'player'
+              activeTab ===
+              'player'
                 ? 'bg-[#8b5cf6] text-white shadow'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             Reproductor Video
           </button>
+
           <button
-            onClick={() => setActiveTab('script')}
+            onClick={() =>
+              setActiveTab(
+                'script'
+              )
+            }
             className={`px-3.5 py-1.5 text-xs font-bold rounded transition-all ${
-              activeTab === 'script'
+              activeTab ===
+              'script'
                 ? 'bg-[#8b5cf6] text-white shadow'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            Desglose de Guion ({scenes.length})
+            Desglose de Guion (
+            {scenes.length})
           </button>
+
         </div>
       </div>
 
-      {activeTab === 'player' ? (
+      {activeTab ===
+      'player' ? (
         <>
-          {/* Main 16:9 Canvas Video Screen */}
-          <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-white/10 shadow-2xl">
-            <canvas
-              ref={canvasRef}
-              width={1280}
-              height={720}
-              className="w-full h-full object-contain cursor-pointer"
-              onClick={handleTogglePlay}
-            />
 
-            {/* Scene Badge Overlay (Top Left) */}
-            <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-white/10 text-white text-xs font-bold flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
-              <span>
-                Escena {currentSceneIndex + 1} de {scenes.length}
-              </span>
-            </div>
+          {/* ==================================================
+              VIDEO FINAL REAL
+              ================================================== */}
 
-            {/* Controls Overlay (Top Right) */}
-            <div className="absolute top-4 right-4 flex items-center gap-2">
-              <button
-                onClick={() => setKenBurnsEnabled(!kenBurnsEnabled)}
-                title="Efecto Zoom Ken Burns"
-                className={`p-2 rounded-md border text-xs font-semibold backdrop-blur-md transition-all ${
-                  kenBurnsEnabled
-                    ? 'bg-[#8b5cf6] border-[#8b5cf6] text-white'
-                    : 'bg-black/60 border-white/10 text-slate-400'
-                }`}
-              >
-                <Layers className="w-4 h-4" />
-              </button>
+          {hasRenderedVideo ? (
+            <div className="space-y-3">
 
-              <button
-                onClick={() => setShowSubtitles(!showSubtitles)}
-                title="Subtítulos Animados"
-                className={`p-2 rounded-md border text-xs font-semibold backdrop-blur-md transition-all ${
-                  showSubtitles
-                    ? 'bg-[#22c55e] border-[#22c55e] text-black font-bold'
-                    : 'bg-black/60 border-white/10 text-slate-400'
-                }`}
-              >
-                <Subtitles className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+              <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-[#22c55e]/40 shadow-2xl">
 
-          {/* Interactive Player Controls Toolbar */}
-          <div className="bg-[#050508] border border-white/5 rounded-lg p-4 space-y-3">
-            {/* Timeline Progress Bar */}
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-mono text-slate-400">
-                {currentSceneIndex + 1} / {scenes.length}
-              </span>
-              <div className="flex-1 bg-white/5 h-2 rounded-full overflow-hidden cursor-pointer flex gap-0.5">
-                {scenes.map((_, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => setCurrentSceneIndex(idx)}
-                    className={`h-full flex-1 transition-all ${
-                      idx === currentSceneIndex
-                        ? 'bg-[#22c55e]'
-                        : idx < currentSceneIndex
-                        ? 'bg-[#8b5cf6]'
-                        : 'bg-white/10 hover:bg-white/20'
-                    }`}
-                  />
-                ))}
+                <video
+                  ref={videoRef}
+                  src={finalVideoUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="w-full h-full object-contain bg-black"
+                  onPlay={
+                    handleVideoPlay
+                  }
+                  onPause={
+                    handleVideoPause
+                  }
+                  onEnded={
+                    handleVideoEnded
+                  }
+                  onError={() => {
+                    console.error(
+                      'No se pudo cargar el MP4:',
+                      finalVideoUrl
+                    );
+                  }}
+                />
+
+                <div className="absolute top-4 left-4 pointer-events-none bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-[#22c55e]/40 text-white text-xs font-bold flex items-center gap-2">
+
+                  <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
+
+                  <span>
+                    VIDEO FINAL · MP4
+                  </span>
+
+                </div>
+
               </div>
-              <span className="text-xs font-mono text-slate-400">
-                ~{project.durationMin} min
-              </span>
-            </div>
 
-            {/* Buttons Row */}
-            <div className="flex items-center justify-between pt-1">
-              {/* Play / Skip Buttons */}
-              <div className="flex items-center gap-2">
+              {/* INFORMACIÓN DEL VIDEO */}
+
+              <div className="bg-[#050508] border border-[#22c55e]/20 rounded-lg p-4">
+
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+
+                  <div>
+
+                    <div className="flex items-center gap-2 text-[#22c55e] text-xs font-bold">
+
+                      <Film className="w-4 h-4" />
+
+                      <span>
+                        VIDEO GENERADO CORRECTAMENTE
+                      </span>
+
+                    </div>
+
+                    <p className="text-xs text-slate-400 mt-1">
+                      El MP4 final fue generado por FFmpeg y está listo para reproducirse.
+                    </p>
+
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+
+                    <button
+                      onClick={
+                        handleDownloadFinalVideo
+                      }
+                      className="px-4 py-2 text-xs font-bold text-black bg-[#22c55e] hover:bg-[#22c55e]/90 rounded-lg flex items-center gap-2 shadow cursor-pointer"
+                    >
+
+                      <Download className="w-4 h-4" />
+
+                      Descargar MP4
+
+                    </button>
+
+                    <a
+                      href={
+                        finalVideoUrl
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg flex items-center gap-2"
+                    >
+
+                      <ExternalLink className="w-3.5 h-3.5" />
+
+                      Abrir video
+
+                    </a>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+          ) : (
+
+            /* ==================================================
+               CANVAS PREVIEW
+               ================================================== */
+
+            <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-white/10 shadow-2xl">
+
+              <canvas
+                ref={canvasRef}
+                width={1280}
+                height={720}
+                className="w-full h-full object-contain cursor-pointer"
+                onClick={
+                  handleTogglePlay
+                }
+              />
+
+              <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-white/10 text-white text-xs font-bold flex items-center gap-2">
+
+                <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
+
+                <span>
+                  Previsualización · Escena{' '}
+                  {currentSceneIndex +
+                    1}{' '}
+                  de{' '}
+                  {scenes.length}
+                </span>
+
+              </div>
+
+              <div className="absolute top-4 right-4 flex items-center gap-2">
+
                 <button
-                  onClick={handlePrevScene}
-                  disabled={currentSceneIndex === 0}
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/5 disabled:opacity-30 cursor-pointer"
+                  onClick={() =>
+                    setKenBurnsEnabled(
+                      (prev) =>
+                        !prev
+                    )
+                  }
+                  title="Efecto Zoom Ken Burns"
+                  className={`p-2 rounded-md border text-xs font-semibold backdrop-blur-md transition-all ${
+                    kenBurnsEnabled
+                      ? 'bg-[#8b5cf6] border-[#8b5cf6] text-white'
+                      : 'bg-black/60 border-white/10 text-slate-400'
+                  }`}
                 >
-                  <SkipBack className="w-4 h-4" />
+                  <Layers className="w-4 h-4" />
                 </button>
 
                 <button
-                  onClick={handleTogglePlay}
-                  className="px-4 py-2 rounded-lg bg-[#8b5cf6] hover:bg-[#8b5cf6]/90 text-white font-bold flex items-center gap-2 text-xs shadow cursor-pointer"
+                  onClick={() =>
+                    setShowSubtitles(
+                      (prev) =>
+                        !prev
+                    )
+                  }
+                  title="Subtítulos"
+                  className={`p-2 rounded-md border text-xs font-semibold backdrop-blur-md transition-all ${
+                    showSubtitles
+                      ? 'bg-[#22c55e] border-[#22c55e] text-black font-bold'
+                      : 'bg-black/60 border-white/10 text-slate-400'
+                  }`}
                 >
-                  {isPlaying ? (
-                    <>
-                      <Pause className="w-4 h-4 fill-current" />
-                      <span>Pausar</span>
-                    </>
+                  <Subtitles className="w-4 h-4" />
+                </button>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* ==================================================
+              CONTROLES
+              ================================================== */}
+
+          <div className="bg-[#050508] border border-white/5 rounded-lg p-4 space-y-3">
+
+            {!hasRenderedVideo && (
+              <div className="flex items-center gap-3">
+
+                <span className="text-xs font-mono text-slate-400">
+                  {currentSceneIndex +
+                    1}{' '}
+                  / {scenes.length}
+                </span>
+
+                <div className="flex-1 bg-white/5 h-2 rounded-full overflow-hidden cursor-pointer flex gap-0.5">
+
+                  {scenes.map(
+                    (
+                      _,
+                      index
+                    ) => (
+                      <div
+                        key={index}
+                        onClick={() => {
+                          setCurrentSceneIndex(
+                            index
+                          );
+
+                          sceneStartTimeRef.current =
+                            Date.now();
+                        }}
+                        className={`h-full flex-1 transition-all ${
+                          index ===
+                          currentSceneIndex
+                            ? 'bg-[#22c55e]'
+                            : index <
+                              currentSceneIndex
+                            ? 'bg-[#8b5cf6]'
+                            : 'bg-white/10 hover:bg-white/20'
+                        }`}
+                      />
+                    )
+                  )}
+
+                </div>
+
+                <span className="text-xs font-mono text-slate-400">
+                  ~
+                  {project.durationMin ||
+                    '—'}{' '}
+                  min
+                </span>
+
+              </div>
+            )}
+
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
+
+              <div className="flex items-center gap-2">
+
+                {!hasRenderedVideo && (
+                  <>
+                    <button
+                      onClick={
+                        handlePrevScene
+                      }
+                      disabled={
+                        currentSceneIndex ===
+                        0
+                      }
+                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/5 disabled:opacity-30 cursor-pointer"
+                    >
+                      <SkipBack className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={
+                        handleTogglePlay
+                      }
+                      className="px-4 py-2 rounded-lg bg-[#8b5cf6] hover:bg-[#8b5cf6]/90 text-white font-bold flex items-center gap-2 text-xs shadow cursor-pointer"
+                    >
+                      {isPlaying ? (
+                        <>
+                          <Pause className="w-4 h-4 fill-current" />
+
+                          <span>
+                            Pausar
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 fill-current" />
+
+                          <span>
+                            Reproducir Preview
+                          </span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={
+                        handleNextScene
+                      }
+                      disabled={
+                        currentSceneIndex ===
+                        scenes.length -
+                          1
+                      }
+                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/5 disabled:opacity-30 cursor-pointer"
+                    >
+                      <SkipForward className="w-4 h-4" />
+                    </button>
+                  </>
+                )}
+
+                {hasRenderedVideo && (
+                  <button
+                    onClick={
+                      handleTogglePlay
+                    }
+                    className="px-4 py-2 rounded-lg bg-[#8b5cf6] hover:bg-[#8b5cf6]/90 text-white font-bold flex items-center gap-2 text-xs shadow cursor-pointer"
+                  >
+                    {isPlaying ? (
+                      <>
+                        <Pause className="w-4 h-4 fill-current" />
+                        Pausar video
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 fill-current" />
+                        Reproducir video
+                      </>
+                    )}
+                  </button>
+                )}
+
+                <button
+                  onClick={() =>
+                    setIsMuted(
+                      (prev) =>
+                        !prev
+                    )
+                  }
+                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 ml-2 cursor-pointer"
+                >
+                  {isMuted ? (
+                    <VolumeX className="w-4 h-4 text-red-400" />
                   ) : (
-                    <>
-                      <Play className="w-4 h-4 fill-current" />
-                      <span>Reproducir</span>
-                    </>
+                    <Volume2 className="w-4 h-4 text-[#22c55e]" />
                   )}
                 </button>
 
-                <button
-                  onClick={handleNextScene}
-                  disabled={currentSceneIndex === scenes.length - 1}
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/5 disabled:opacity-30 cursor-pointer"
-                >
-                  <SkipForward className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={() => setIsMuted(!isMuted)}
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 ml-2 cursor-pointer"
-                >
-                  {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-[#22c55e]" />}
-                </button>
               </div>
 
-              {/* Action Downloads */}
-              <div className="flex items-center gap-2">
+              {/* DESCARGAS */}
+
+              <div className="flex flex-wrap items-center gap-2">
+
                 <button
-                  onClick={handleDownloadSRT}
+                  onClick={
+                    handleDownloadSRT
+                  }
                   className="px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg flex items-center gap-1.5 cursor-pointer"
                 >
                   <FileText className="w-3.5 h-3.5 text-fuchsia-400" />
-                  <span>Subtítulos (.SRT)</span>
+
+                  <span>
+                    Subtítulos
+                  </span>
                 </button>
 
                 <button
-                  onClick={handleDownloadScriptJson}
+                  onClick={
+                    handleDownloadScriptJson
+                  }
                   className="px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg flex items-center gap-1.5 cursor-pointer"
                 >
                   <FileText className="w-3.5 h-3.5 text-[#8b5cf6]" />
-                  <span>Guion (.JSON)</span>
+
+                  <span>
+                    Guion JSON
+                  </span>
                 </button>
 
                 <button
-                  onClick={handleExportVideoFile}
-                  disabled={isExportingVideo}
-                  className="px-4 py-2 text-xs font-bold text-black bg-[#22c55e] hover:bg-[#22c55e]/90 rounded-lg flex items-center gap-2 shadow cursor-pointer"
+                  onClick={
+                    handleExportVideoFile
+                  }
+                  disabled={
+                    isExportingVideo
+                  }
+                  className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-2 shadow cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    hasRenderedVideo
+                      ? 'text-black bg-[#22c55e] hover:bg-[#22c55e]/90'
+                      : 'text-black bg-[#22c55e] hover:bg-[#22c55e]/90'
+                  }`}
                 >
+
                   <Download className="w-4 h-4" />
-                  <span>{isExportingVideo ? `Exportando (${exportProgress}%)...` : 'Descargar Video MP4'}</span>
+
+                  <span>
+                    {isExportingVideo
+                      ? `Exportando (${exportProgress}%)...`
+                      : hasRenderedVideo
+                      ? 'Descargar Video MP4'
+                      : 'Generar Video MP4'}
+                  </span>
+
                 </button>
+
               </div>
+
             </div>
           </div>
 
-          {/* Active FFmpeg Export Assembly Progress Banner */}
+          {/* ==================================================
+              PROGRESO FFmpeg
+              ================================================== */}
+
           {isExportingVideo && (
-            <div className="bg-[#8b5cf6]/10 border border-[#8b5cf6]/40 rounded-lg p-4 space-y-3 animate-fade-in">
+            <div className="bg-[#8b5cf6]/10 border border-[#8b5cf6]/40 rounded-lg p-4 space-y-3">
+
               <div className="flex items-center justify-between text-xs font-bold text-white">
+
                 <div className="flex items-center gap-2">
+
                   <Sparkles className="w-4 h-4 text-[#8b5cf6] animate-spin" />
-                  <span className="uppercase tracking-wider">Ensamblado de Video FFmpeg en Servidor</span>
+
+                  <span className="uppercase tracking-wider">
+                    Ensamblado de Video FFmpeg
+                  </span>
+
                 </div>
-                <span className="font-mono text-[#22c55e] text-sm">{exportProgress}%</span>
+
+                <span className="font-mono text-[#22c55e] text-sm">
+                  {exportProgress}%
+                </span>
+
               </div>
 
               <div className="w-full bg-[#050508] h-2.5 rounded-full overflow-hidden p-0.5 border border-white/10">
+
                 <div
                   className="bg-gradient-to-r from-[#8b5cf6] via-fuchsia-500 to-[#22c55e] h-full rounded-full transition-all duration-300"
-                  style={{ width: `${Math.max(5, exportProgress)}%` }}
+                  style={{
+                    width: `${Math.max(
+                      5,
+                      exportProgress
+                    )}%`,
+                  }}
                 />
+
               </div>
 
               <p className="text-xs text-slate-300 font-mono italic flex items-center gap-1.5">
-                <span className="text-[#8b5cf6] font-bold">&gt;</span>
-                <span>{exportStatusMessage || 'Procesando imágenes, narraciones TTS, efectos Ken Burns y subtítulos...'}</span>
+
+                <span className="text-[#8b5cf6] font-bold">
+                  &gt;
+                </span>
+
+                <span>
+                  {exportStatusMessage ||
+                    'Procesando video...'}
+                </span>
+
               </p>
+
             </div>
           )}
 
-          {/* Current Scene Inspector Card */}
+          {/* ==================================================
+              ESCENA ACTUAL
+              ================================================== */}
+
           {currentScene && (
             <div className="bg-[#050508] border border-white/5 rounded-lg p-4 space-y-2">
+
               <div className="flex items-center justify-between text-xs text-[#8b5cf6] font-bold">
-                <span>ESCENA #{currentScene.numero}</span>
-                <span className="text-slate-400 font-normal text-[11px]">Duración Estimada: ~10s</span>
+
+                <span>
+                  ESCENA #
+                  {
+                    currentScene.numero
+                  }
+                </span>
+
+                <span className="text-slate-400 font-normal text-[11px]">
+                  Duración:{' '}
+                  {getSceneDurationSeconds(
+                    currentScene
+                  ).toFixed(
+                    1
+                  )}
+                  s
+                </span>
+
               </div>
-              <p className="text-sm text-slate-200 leading-relaxed font-sans">
-                <strong>Narración:</strong> "{currentScene.texto_narracion}"
+
+              <p className="text-sm text-slate-200 leading-relaxed">
+
+                <strong>
+                  Narración:
+                </strong>{' '}
+
+                "
+                {
+                  currentScene.texto_narracion
+                }
+                "
+
               </p>
+
               <p className="text-xs text-slate-400 italic">
-                <strong>Prompt Imagen:</strong> {currentScene.prompt_imagen}
+
+                <strong>
+                  Prompt Imagen:
+                </strong>{' '}
+
+                {
+                  currentScene.prompt_imagen
+                }
+
               </p>
+
             </div>
           )}
+
         </>
       ) : (
-        /* Full Script Accordion Breakdown */
+
+        /* ======================================================
+           SCRIPT
+           ====================================================== */
+
         <div className="space-y-3">
+
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span>Guion Estructurado Completo ({scenes.length} escenas)</span>
+
+            <span>
+              Guion Estructurado
+              Completo (
+              {scenes.length}{' '}
+              escenas)
+            </span>
+
             <button
-              onClick={handleDownloadScriptJson}
+              onClick={
+                handleDownloadScriptJson
+              }
               className="text-[#8b5cf6] hover:underline flex items-center gap-1 cursor-pointer"
             >
+
               <Download className="w-3.5 h-3.5" />
-              <span>Exportar JSON completo</span>
+
+              <span>
+                Exportar JSON completo
+              </span>
+
             </button>
+
           </div>
 
           <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
-            {scenes.map((scene, idx) => (
-              <div
-                key={idx}
-                className="bg-[#050508] border border-white/5 hover:border-[#8b5cf6]/50 rounded-lg p-4 transition-all flex flex-col md:flex-row gap-4 items-start"
-              >
-                {scene.imageUrl && (
-                  <div className="w-full md:w-48 aspect-video rounded overflow-hidden flex-shrink-0 border border-white/10 relative group">
-                    <img
-                      src={scene.imageUrl}
-                      alt={`Escena ${scene.numero}`}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute top-1 left-1 bg-black/80 px-2 py-0.5 rounded text-[10px] text-white font-mono">
-                      #{scene.numero}
+
+            {scenes.map(
+              (
+                scene,
+                index
+              ) => (
+                <div
+                  key={index}
+                  className="bg-[#050508] border border-white/5 hover:border-[#8b5cf6]/50 rounded-lg p-4 transition-all flex flex-col md:flex-row gap-4 items-start"
+                >
+
+                  {scene.imageUrl && (
+                    <div className="w-full md:w-48 aspect-video rounded overflow-hidden flex-shrink-0 border border-white/10 relative group">
+
+                      <img
+                        src={
+                          scene.imageUrl
+                        }
+                        alt={`Escena ${
+                          scene.numero
+                        }`}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+
+                      <div className="absolute top-1 left-1 bg-black/80 px-2 py-0.5 rounded text-[10px] text-white font-mono">
+
+                        #
+                        {
+                          scene.numero
+                        }
+
+                      </div>
+
                     </div>
+                  )}
+
+                  <div className="flex-1 space-y-1.5">
+
+                    <div className="flex items-center justify-between">
+
+                      <span className="text-xs font-bold text-[#8b5cf6]">
+                        ESCENA #
+                        {
+                          scene.numero
+                        }
+                      </span>
+
+                      <button
+                        onClick={() => {
+                          setCurrentSceneIndex(
+                            index
+                          );
+
+                          setActiveTab(
+                            'player'
+                          );
+
+                          sceneStartTimeRef.current =
+                            Date.now();
+                        }}
+                        className="text-[11px] text-[#22c55e] hover:underline cursor-pointer"
+                      >
+                        Ver en Reproductor →
+                      </button>
+
+                    </div>
+
+                    <p className="text-sm text-white leading-relaxed">
+
+                      <strong>
+                        Narración:
+                      </strong>{' '}
+
+                      {
+                        scene.texto_narracion
+                      }
+
+                    </p>
+
+                    <p className="text-xs text-amber-300">
+
+                      <strong>
+                        Subtítulo:
+                      </strong>{' '}
+
+                      "
+                      {
+                        scene.texto_subtitulo
+                      }
+                      "
+
+                    </p>
+
+                    <p className="text-[11px] text-slate-400 font-mono">
+
+                      <strong>
+                        Prompt Imagen:
+                      </strong>{' '}
+
+                      {
+                        scene.prompt_imagen
+                      }
+
+                    </p>
+
+                    <p className="text-[10px] text-slate-500">
+
+                      Duración estimada:{' '}
+
+                      {getSceneDurationSeconds(
+                        scene
+                      ).toFixed(
+                        1
+                      )}
+                      s
+
+                    </p>
+
                   </div>
-                )}
 
-                <div className="flex-1 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#8b5cf6]">
-                      ESCENA #{scene.numero}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setCurrentSceneIndex(idx);
-                        setActiveTab('player');
-                      }}
-                      className="text-[11px] text-[#22c55e] hover:underline cursor-pointer"
-                    >
-                      Ver en Reproductor &rarr;
-                    </button>
-                  </div>
-
-                  <p className="text-sm text-white leading-relaxed">
-                    <strong>Narración:</strong> {scene.texto_narracion}
-                  </p>
-
-                  <p className="text-xs text-amber-300">
-                    <strong>Subtítulo en pantalla:</strong> "{scene.texto_subtitulo}"
-                  </p>
-
-                  <p className="text-[11px] text-slate-400 font-mono">
-                    <strong>Prompt Imagen (Inglés):</strong> {scene.prompt_imagen}
-                  </p>
                 </div>
-              </div>
-            ))}
+              )
+            )}
+
           </div>
+
         </div>
       )}
+
     </div>
   );
 };
+
+/*
+============================================================
+PLACEHOLDER
+============================================================
+*/
+
+function FilmIconPlaceholder() {
+  return (
+    <div className="mx-auto w-12 h-12 rounded-xl bg-[#8b5cf6]/10 border border-[#8b5cf6]/20 flex items-center justify-center">
+
+      <Film className="w-6 h-6 text-[#8b5cf6]" />
+
+    </div>
+  );
+}
