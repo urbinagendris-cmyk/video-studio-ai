@@ -75,6 +75,30 @@ export const VideoStudioPlayer: React.FC<
 
   /*
    * ============================================================
+   * NUEVO: FORMATO DEL VIDEO
+   *
+   * Los proyectos guardados antes de esta función no tienen
+   * aspectRatio, así que se tratan como 16:9.
+   * ============================================================
+   */
+
+  const isVertical =
+    project?.aspectRatio ===
+    '9:16';
+
+  const canvasWidth =
+    isVertical ? 720 : 1280;
+
+  const canvasHeight =
+    isVertical ? 1280 : 720;
+
+  const playerFrameClass =
+    isVertical
+      ? 'aspect-[9/16] max-w-[360px] mx-auto'
+      : 'aspect-video';
+
+  /*
+   * ============================================================
    * VIDEO FINAL
    * ============================================================
    */
@@ -794,11 +818,12 @@ export const VideoStudioPlayer: React.FC<
     let active =
       true;
 
+    // NUEVO: dimensiones según el formato (antes: 1280 x 720 fijo)
     canvas.width =
-      1280;
+      canvasWidth;
 
     canvas.height =
-      720;
+      canvasHeight;
 
     const renderFrame =
       () => {
@@ -958,11 +983,16 @@ export const VideoStudioPlayer: React.FC<
 
           ctx.save();
 
+          // NUEVO: se usa el lado menor para que en vertical
+          // el texto no salga enorme (en 16:9 da el mismo valor de antes)
           const fontSize =
             Math.max(
               22,
               Math.floor(
-                height *
+                Math.min(
+                  width,
+                  height
+                ) *
                   0.042
               )
             );
@@ -1166,6 +1196,8 @@ export const VideoStudioPlayer: React.FC<
     scenes.length,
     drawFallback,
     drawImageCover,
+    canvasWidth, // NUEVO
+    canvasHeight, // NUEVO
   ]);
 
   /*
@@ -1932,6 +1964,11 @@ export const VideoStudioPlayer: React.FC<
             {project.durationMin ||
               'personalizada'}{' '}
             min
+            {/* NUEVO: etiqueta de formato */}
+            {' '}· Formato:{' '}
+            {isVertical
+              ? '9:16'
+              : '16:9'}
 
           </p>
 
@@ -1986,7 +2023,8 @@ export const VideoStudioPlayer: React.FC<
           {hasRenderedVideo ? (
             <div className="space-y-3">
 
-              <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-[#22c55e]/40 shadow-2xl">
+              {/* NUEVO: aspect-video pasa a depender del formato */}
+              <div className={`relative w-full ${playerFrameClass} bg-black rounded-lg overflow-hidden border border-[#22c55e]/40 shadow-2xl`}>
 
                 <video
                   ref={videoRef}
@@ -2091,12 +2129,13 @@ export const VideoStudioPlayer: React.FC<
                CANVAS PREVIEW
                ================================================== */
 
-            <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-white/10 shadow-2xl">
+            /* NUEVO: aspect-video pasa a depender del formato */
+            <div className={`relative w-full ${playerFrameClass} bg-black rounded-lg overflow-hidden border border-white/10 shadow-2xl`}>
 
               <canvas
                 ref={canvasRef}
-                width={1280}
-                height={720}
+                width={canvasWidth}
+                height={canvasHeight}
                 className="w-full h-full object-contain cursor-pointer"
                 onClick={
                   handleTogglePlay
@@ -2535,7 +2574,14 @@ export const VideoStudioPlayer: React.FC<
                 >
 
                   {scene.imageUrl && (
-                    <div className="w-full md:w-48 aspect-video rounded overflow-hidden flex-shrink-0 border border-white/10 relative group">
+                    /* NUEVO: miniatura vertical (9/16) cuando el video es 9:16 */
+                    <div
+                      className={`${
+                        isVertical
+                          ? 'w-28 aspect-[9/16]'
+                          : 'w-full md:w-48 aspect-video'
+                      } rounded overflow-hidden flex-shrink-0 border border-white/10 relative group`}
+                    >
 
                       <img
                         src={

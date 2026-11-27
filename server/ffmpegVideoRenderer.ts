@@ -362,6 +362,29 @@ async function processExportJob(
 
   const sceneDurations: number[] = [];
 
+  /*
+  ==========================================================
+  NUEVO: FORMATO DEL VIDEO
+
+  Si el proyecto no trae aspectRatio (proyectos anteriores),
+  se asume 16:9, igual que antes.
+  ==========================================================
+  */
+
+  const aspectRatio: '16:9' | '9:16' =
+    project?.aspectRatio === '9:16'
+      ? '9:16'
+      : '16:9';
+
+  const dims =
+    getRenderDimensions(
+      aspectRatio
+    );
+
+  console.log(
+    `[FFmpeg Job ${jobId}] Formato: ${aspectRatio} (${dims.width}x${dims.height})`
+  );
+
   console.log(
     `[FFmpeg Job ${jobId}] Rendering ${totalScenes} scenes...`
   );
@@ -491,12 +514,16 @@ async function processExportJob(
         );
 
         await createFallbackImage(
-          imagePath
+          imagePath,
+          dims.width, // NUEVO
+          dims.height // NUEVO
         );
       }
     } else {
       await createFallbackImage(
-        imagePath
+        imagePath,
+        dims.width, // NUEVO
+        dims.height // NUEVO
       );
     }
 
@@ -813,7 +840,8 @@ async function processExportJob(
         i,
         frames,
         scene.prompt_imagen ||
-          ''
+          '',
+        dims // NUEVO
       );
 
     /*
@@ -1236,8 +1264,9 @@ async function processExportJob(
           srtPath
         );
 
+      // NUEVO: el estilo de subtítulos depende del formato
       const subtitleFilter =
-        `subtitles='${subtitleFilterPath}':force_style='FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=4,MarginV=30,Bold=1'`;
+        `subtitles='${subtitleFilterPath}':force_style='${dims.subtitleStyle}'`;
 
       /*
       IMPORTANTE:
@@ -1612,6 +1641,58 @@ async function createAmbientMusic(
 
 /*
 ============================================================
+NUEVO: DIMENSIONES SEGÚN EL FORMATO
+============================================================
+
+16:9 (horizontal) -> exactamente los valores que ya se
+usaban: salida 1280x720, supersampling 3840x2160 y el
+mismo estilo de subtítulos.
+
+9:16 (vertical) -> salida 720x1280, supersampling
+2160x3840 y subtítulos con fuente más pequeña y mayor
+margen inferior (para que no los tapen los botones de
+TikTok / Reels / Shorts).
+
+Los valores del estilo vertical se pueden ajustar aquí
+sin tocar el resto del código.
+
+============================================================
+*/
+
+interface RenderDimensions {
+  width: number;
+  height: number;
+  ssWidth: number;
+  ssHeight: number;
+  subtitleStyle: string;
+}
+
+function getRenderDimensions(
+  aspectRatio: '16:9' | '9:16'
+): RenderDimensions {
+  if (aspectRatio === '9:16') {
+    return {
+      width: 720,
+      height: 1280,
+      ssWidth: 2160,
+      ssHeight: 3840,
+      subtitleStyle:
+        'FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=4,MarginV=50,MarginL=20,MarginR=20,Bold=1',
+    };
+  }
+
+  return {
+    width: 1280,
+    height: 720,
+    ssWidth: 3840,
+    ssHeight: 2160,
+    subtitleStyle:
+      'FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=4,MarginV=30,Bold=1',
+  };
+}
+
+/*
+============================================================
 ANALIZAR PROMPT DE LA ESCENA
 ============================================================
 
@@ -1723,10 +1804,12 @@ misma resolución que la salida.
 function buildKenBurnsFilter(
   sceneIndex: number,
   frames: number,
-  promptImagen: string
+  promptImagen: string,
+  dims: RenderDimensions // NUEVO
 ): string {
+  // NUEVO: el supersampling depende del formato (antes: 3840x2160 fijo)
   const SUPERSAMPLE =
-    'scale=3840:2160:flags=lanczos';
+    `scale=${dims.ssWidth}:${dims.ssHeight}:flags=lanczos`;
 
   const {
     offsetX,
@@ -1796,8 +1879,9 @@ function buildKenBurnsFilter(
     se siga moviendo después de eso).
     */
 
+    // NUEVO: s=${dims.width}x${dims.height} (antes: 1280x720 fijo)
     zoompanExpr =
-      `zoompan=z='min(zoom+${zoomIncrement},${MAX_ZOOM})':x='(0.5+(${offsetX})*(min(on/${effectiveZoomFrames},1)))*iw-(iw/zoom/2)':y='(0.5+(${offsetY})*(min(on/${effectiveZoomFrames},1)))*ih-(ih/zoom/2)':d=${frames}:s=1280x720:fps=25`;
+      `zoompan=z='min(zoom+${zoomIncrement},${MAX_ZOOM})':x='(0.5+(${offsetX})*(min(on/${effectiveZoomFrames},1)))*iw-(iw/zoom/2)':y='(0.5+(${offsetY})*(min(on/${effectiveZoomFrames},1)))*ih-(ih/zoom/2)':d=${frames}:s=${dims.width}x${dims.height}:fps=25`;
   } else {
     /*
     ZOOM OUT
@@ -1810,8 +1894,9 @@ function buildKenBurnsFilter(
     negativos una vez que ya llegó a 0).
     */
 
+    // NUEVO: s=${dims.width}x${dims.height} (antes: 1280x720 fijo)
     zoompanExpr =
-      `zoompan=z='if(eq(on,1),${MAX_ZOOM},max(zoom-${zoomIncrement},${MIN_ZOOM}))':x='(0.5+(${offsetX})*(max(1-(on/${effectiveZoomFrames}),0)))*iw-(iw/zoom/2)':y='(0.5+(${offsetY})*(max(1-(on/${effectiveZoomFrames}),0)))*ih-(ih/zoom/2)':d=${frames}:s=1280x720:fps=25`;
+      `zoompan=z='if(eq(on,1),${MAX_ZOOM},max(zoom-${zoomIncrement},${MIN_ZOOM}))':x='(0.5+(${offsetX})*(max(1-(on/${effectiveZoomFrames}),0)))*iw-(iw/zoom/2)':y='(0.5+(${offsetY})*(max(1-(on/${effectiveZoomFrames}),0)))*ih-(ih/zoom/2)':d=${frames}:s=${dims.width}x${dims.height}:fps=25`;
   }
 
   return `${SUPERSAMPLE},${zoompanExpr},format=yuv420p`;
@@ -1855,7 +1940,9 @@ IMAGEN DE RESPALDO
 */
 
 async function createFallbackImage(
-  imagePath: string
+  imagePath: string,
+  width: number = 1280, // NUEVO (por defecto igual que antes)
+  height: number = 720 // NUEVO (por defecto igual que antes)
 ): Promise<void> {
   if (!ffmpegPath) {
     throw new Error(
@@ -1864,7 +1951,7 @@ async function createFallbackImage(
   }
 
   await execAsync(
-    `"${ffmpegPath}" -y -f lavfi -i "color=c=12121e:s=1280x720:d=1" -frames:v 1 "${imagePath}"`
+    `"${ffmpegPath}" -y -f lavfi -i "color=c=12121e:s=${width}x${height}:d=1" -frames:v 1 "${imagePath}"`
   );
 }
 

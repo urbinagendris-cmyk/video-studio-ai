@@ -14,6 +14,7 @@ import {
   VideoProject,
   ToneType,
   VisualStyle,
+  AspectRatio, // NUEVO
   PipelineProgressState,
   Scene,
 } from './types';
@@ -499,6 +500,7 @@ export default function App() {
       tone: ToneType;
       visualStyle: VisualStyle;
       subtitlesEnabled: boolean;
+      aspectRatio: AspectRatio; // NUEVO
     }
   ) => {
     if (isGenerating) {
@@ -513,6 +515,17 @@ export default function App() {
       Number(params.durationMin) > 0
         ? Number(params.durationMin)
         : 1;
+
+    // NUEVO: formato validado (por defecto 16:9) y tamaño de imagen de respaldo
+    const aspectRatio: AspectRatio =
+      params.aspectRatio === '9:16'
+        ? '9:16'
+        : '16:9';
+
+    const fallbackImageSize =
+      aspectRatio === '9:16'
+        ? '720/1280'
+        : '1280/720';
 
     try {
       /*
@@ -666,6 +679,7 @@ export default function App() {
                     params.visualStyle,
                   topic:
                     params.topic,
+                  aspectRatio, // NUEVO
                 }),
               }
             );
@@ -713,7 +727,7 @@ export default function App() {
               imgData?.imageUrl ||
               `https://picsum.photos/seed/${
                 i + 100
-              }/1280/720`,
+              }/${fallbackImageSize}`, // NUEVO: tamaño según formato
           });
 
         } catch (imageError) {
@@ -732,7 +746,7 @@ export default function App() {
             imageUrl:
               `https://picsum.photos/seed/${
                 i + 200
-              }/1280/720`,
+              }/${fallbackImageSize}`, // NUEVO: tamaño según formato
           });
         }
       }
@@ -795,6 +809,8 @@ export default function App() {
 
           subtitlesEnabled:
             params.subtitlesEnabled,
+
+          aspectRatio, // NUEVO
 
           status:
             'generating',

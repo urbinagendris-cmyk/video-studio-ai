@@ -53,7 +53,7 @@ export const VideoGallery: React.FC<VideoGalleryProps> = ({
               <img
                 src={
                   project.thumbnailUrl ||
-                  project.script.escenas?.[0]?.imageUrl ||
+                  project.script?.escenas?.[0]?.imageUrl ||
                   'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1280&q=80'
                 }
                 alt={project.topic}
@@ -80,7 +80,7 @@ export const VideoGallery: React.FC<VideoGalleryProps> = ({
 
               {/* Scenes Count Tag */}
               <div className="absolute bottom-2 right-2 px-2 py-0.5 text-[9px] font-mono bg-black/80 backdrop-blur-md text-slate-300 rounded border border-white/10">
-                {project.script.escenas?.length || 0} escenas
+                {project.script?.escenas?.length || 0} escenas
               </div>
             </div>
 
@@ -88,7 +88,7 @@ export const VideoGallery: React.FC<VideoGalleryProps> = ({
             <div className="p-3.5 space-y-3 flex-1 flex flex-col justify-between">
               <div>
                 <h3 className="font-bold text-xs text-white line-clamp-1 leading-snug group-hover:text-[#8b5cf6] transition-colors">
-                  {project.script.titulo || project.topic}
+                  {project.script?.titulo || project.topic}
                 </h3>
                 <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5 font-sans italic">
                   {project.topic}

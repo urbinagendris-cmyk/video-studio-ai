@@ -6,10 +6,13 @@ coverage/
 *.log
 logs.txt
 .env*
-.env.example
+!.env.example
 
 # Editor
 .vscode/
+
+# AI Studio local files
+assets/.aistudio/
 
 # Videos generados
 rendered-videos/

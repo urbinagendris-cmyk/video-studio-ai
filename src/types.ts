@@ -13,6 +13,9 @@ export type VisualStyle =
   | '3d_render'
   | 'anime';
 
+// NUEVO: formato del video
+export type AspectRatio = '16:9' | '9:16';
+
 export interface Scene {
   numero: number;
 
@@ -67,6 +70,10 @@ export interface VideoProject {
   visualStyle: VisualStyle;
 
   subtitlesEnabled: boolean;
+
+  // NUEVO: opcional para que los proyectos guardados antes
+  // (sin este campo) sigan funcionando. Si falta, se asume '16:9'.
+  aspectRatio?: AspectRatio;
 
   script: VideoScript;
 

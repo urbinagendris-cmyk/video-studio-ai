@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ToneType, VisualStyle } from '../types';
+// NUEVO: se importa AspectRatio
+import { ToneType, VisualStyle, AspectRatio } from '../types';
 import {
   Sparkles,
   Eye,
@@ -15,6 +16,8 @@ interface VideoCreatorFormProps {
     tone: ToneType;
     visualStyle: VisualStyle;
     subtitlesEnabled: boolean;
+    // NUEVO
+    aspectRatio: AspectRatio;
   }) => void;
   isLoading: boolean;
 }
@@ -70,6 +73,27 @@ const STYLE_OPTIONS: { id: VisualStyle; label: string }[] = [
   { id: 'anime', label: '🐉 Anime / Ilustración' },
 ];
 
+// NUEVO: opciones de formato
+const ASPECT_OPTIONS: {
+  id: AspectRatio;
+  label: string;
+  icon: string;
+  desc: string;
+}[] = [
+  {
+    id: '16:9',
+    label: '16:9 Horizontal',
+    icon: '🖥️',
+    desc: 'YouTube y Facebook',
+  },
+  {
+    id: '9:16',
+    label: '9:16 Vertical',
+    icon: '📱',
+    desc: 'TikTok, Reels y Shorts',
+  },
+];
+
 export const VideoCreatorForm: React.FC<VideoCreatorFormProps> = ({
   onGenerate,
   isLoading,
@@ -80,6 +104,8 @@ export const VideoCreatorForm: React.FC<VideoCreatorFormProps> = ({
   const [visualStyle, setVisualStyle] =
     useState<VisualStyle>('cinematic');
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
+  // NUEVO
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,6 +133,8 @@ export const VideoCreatorForm: React.FC<VideoCreatorFormProps> = ({
       tone,
       visualStyle,
       subtitlesEnabled,
+      // NUEVO
+      aspectRatio,
     });
   };
 
@@ -220,6 +248,37 @@ export const VideoCreatorForm: React.FC<VideoCreatorFormProps> = ({
           Déjalo vacío para que la IA detecte la duración escrita
           en el prompt.
         </p>
+      </div>
+
+      {/* NUEVO: Aspect ratio */}
+      <div className="pt-2 border-t border-white/5 space-y-2">
+        <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">
+          Formato del video
+        </label>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {ASPECT_OPTIONS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => setAspectRatio(a.id)}
+              className={`p-3 rounded-lg border text-left transition-all ${
+                aspectRatio === a.id
+                  ? 'bg-[#8b5cf6]/10 border-[#8b5cf6] text-white shadow-sm'
+                  : 'bg-[#050508] border-white/5 text-slate-400 hover:text-slate-200 hover:border-white/10'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-bold text-xs text-white mb-1">
+                <span>{a.icon}</span>
+                <span>{a.label}</span>
+              </div>
+
+              <p className="text-[10px] text-slate-400 leading-snug">
+                {a.desc}
+              </p>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Style */}
